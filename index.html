@@ -648,21 +648,81 @@ body{margin:0}
 </script>
 
 <script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getAuth, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, signOut } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import { getFirestore, collection, doc, addDoc, setDoc, updateDoc, deleteDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyDUmJ-7Qma6tkuUA7DF17-G3ib34pIqoWM",
+  authDomain: "la-taniere-95fc5.firebaseapp.com",
+  projectId: "la-taniere-95fc5",
+  storageBucket: "la-taniere-95fc5.firebasestorage.app",
+  messagingSenderId: "346350405821",
+  appId: "1:346350405821:web:b2f7cb2755c2fb4c04cfd4"
+};
+
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+auth.languageCode = "fr";
+const fs = getFirestore(app);
 const $ = id => document.getElementById(id);
-const show = w => { $("login").hidden = true; $("checking").hidden = w !== "checking"; $("denied").hidden = w !== "denied"; $("app").hidden = w !== "app"; $("tabsNav").hidden = w !== "app"; };
-show("checking");
-let db = null;
-try { db = await claude.use("db"); } catch (e) { db = null; }
-if (!db) {
-  $("deniedMsg").textContent = "Ouvre cette page connecté à ton compte Claude pour accéder à la maison.";
-  show("denied");
-} else {
-  window.taniere.start(db,
-    () => { $("deniedMsg").textContent = "Tu n'as pas accès à cette maison. Demande une invitation."; show("denied"); },
-    () => show("app"));
+
+// Small adapter so the app code keeps the same shape it had in Claude.
+const adapter = {
+  collection(col){
+    const cref = collection(fs, col);
+    return {
+      doc(id){ const r = id ? doc(fs, col, id) : doc(cref);
+        return { id: r.id, set: d => setDoc(r, d), update: d => updateDoc(r, d), delete: () => deleteDoc(r) }; },
+      add: d => addDoc(cref, d),
+      onSnapshot: (next, err) => onSnapshot(cref, s => next({ docs: s.docs.map(x => ({ id: x.id, data: () => x.data() })) }), err)
+    };
+  }
+};
+
+function show(which){
+  $("login").hidden = which !== "login";
+  $("checking").hidden = which !== "checking";
+  $("denied").hidden = which !== "denied";
+  $("app").hidden = which !== "app";
+  $("tabsNav").hidden = which !== "app";
 }
-$("logoutBtn").hidden = true;
-$("deniedOut").hidden = true;
+let started = false;
+onAuthStateChanged(auth, user => {
+  if (!user){ show("login"); return; }
+  if (started) return;
+  started = true;
+  show("checking");
+  window.taniere.start(adapter,
+    () => { $("deniedMsg").textContent = "Le compte " + (user.email || "") + " ne fait pas partie de la maison."; show("denied"); },
+    () => show("app"));
+});
+
+$("gBtn").addEventListener("click", async () => {
+  $("lErr").textContent = ""; $("gLabel").textContent = "Connexion…";
+  const provider = new GoogleAuthProvider();
+  provider.setCustomParameters({ prompt: "select_account" });
+  try { await signInWithPopup(auth, provider); }
+  catch (err) {
+    const c = err && err.code;
+    if (c === "auth/popup-blocked" || c === "auth/operation-not-supported-in-this-environment") {
+      try { await signInWithRedirect(auth, provider); return; } catch (e2) { $("lErr").textContent = "La connexion n'a pas pu s'ouvrir. Réessaie depuis Safari."; }
+    } else if (c === "auth/popup-closed-by-user" || c === "auth/cancelled-popup-request") {
+      $("lErr").textContent = "";
+    } else if (c === "auth/network-request-failed") {
+      $("lErr").textContent = "Pas de connexion internet.";
+    } else if (c === "auth/unauthorized-domain") {
+      $("lErr").textContent = "Cette adresse n'est pas encore autorisée dans Firebase.";
+    } else {
+      $("lErr").textContent = "La connexion a échoué. Réessaie.";
+    }
+  }
+  $("gLabel").textContent = "Se connecter avec Google";
+});
+getRedirectResult(auth).catch(() => {});
+const out = () => signOut(auth).then(() => location.reload());
+$("logoutBtn").addEventListener("click", out);
+$("deniedOut").addEventListener("click", out);
 </script>
 </body>
 </html>
